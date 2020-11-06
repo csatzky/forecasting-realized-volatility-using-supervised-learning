@@ -1,0 +1,1410 @@
+---
+title: "Forecasting EUR/USD Volatility Using Supervised Learning"
+subtitle: "Capstone Project – HarvardX Data Science Program"
+author: "[Christian Satzky](https://www.linkedin.com/in/christian-satzky/), edX ID CS87"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  pdf_document:
+    keep_tex: yes
+    number_sections: true
+urlcolor: blue
+bibliography: references.bib
+nocite: '@*'
+---
+
+\newpage
+\tableofcontents
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      tidy=TRUE,
+                      warning = FALSE, message = FALSE)
+library(kableExtra)
+library(gridExtra)
+```
+
+# Acknowledgement
+
+This analysis is for partly fulfillment of the 'Capstone' module in the [HarvardX Data Science](https://www.edx.org/professional-certificate/harvardx-data-science) program, an online learning initiative by Harvard University. The programming parts are written in R [@R-base].
+
+All code is _fully reproducible_ and all steps that led to the results are documented below. For the complete code please look into the *.Rmd file directly. In the rendered PDF version, most chunks of code are not displayed for an improved reading experience.
+
+# Introduction and Objective
+
+This project deals with predicting EUR/USD volatility using supervised learning. For those unfamiliar with the topic of financial volatility and/or its scientific measurement, I am providing [an excursion in the appendix][Appendix 1: Financial Volatility] which you may like to read before continuing with this paper.
+
+Accurate forecasting of volatility is crucial for the pricing of financial derivatives, portfolio allocation and effective risk management. The goal of this project is to find machine-learning methods that are best suited for volatility forecasting.
+
+For this project, [SHARELAB LIMITED](https://sharelab.com) provided data containing daily _realized volatility_ (RV) of EUR/USD currency quotes. The data consists of a `r text_spec("training", color="black", background="#EEEEEE")` set (data from 1/1/2010 to 12/31/2019), and a `r text_spec("validation", color="black", background="#EEEEEE")` set (data from 1/1/2020 to 7/31/2020). The objective of this project is to predict $\textrm{RV}_{t+1}$ (i.e. EUR/USD realized volatility for date $t + 1$) as accurately as possible on the pseudo out-of-sample `r text_spec("validation", color="black", background="#EEEEEE")` set.
+
+Any analysis and modeling is strictly performed on the `r text_spec("training", color="black", background="#EEEEEE")` dataset, while the `r text_spec("validation", color="black", background="#EEEEEE")` subset is used only to assess the final model's performance per machine-learning method considered. The performance measure is the root mean square error (RMSE).
+
+With consent of SHARELAB LIMITED, the data is publicly available in the [*.Rdata file on GitHub](https://github.com/csatzky/forecasting-realized-volatility-using-supervised-learning/blob/main/data/EURUSD_realized_volatility.RData).
+
+# Executive Summary
+
+The dataset contains future realized volatility $RV_{t+1}$ (y-variable) and predictors that are aggregates of _past_ volatility. Data exploration reveals that (1) the relationship between the $X$ variables and $RV_{t+1}$ [appears to be well approximated by a straight line][Relationship Across Variables] and (2) RV seems to exhibit [significant dependence with regards to day of the week][Stratification by Day of the Week].
+
+When it comes to modeling, four general methods are considered: Linear regression, tree ensembles, support vector machine and k-nearest neighbor. The best performing model variants for each category are:
+
+* Linear regression: ['Weekday effect model'][Weekday Effect Model]
+* Tree ensemble: [Gradient boosted trees][Gradient Boosted Trees (XGBoost)]
+* Support vector machine (SVM): [SVM with linear kernel][Linear Kernel]
+* [K-nearest neighbor][K Nearest Neighbor] (only one model considered)
+
+Of all methods and models considered, the gradient boosted tree algorithm performs best with an RMSE of `r round(0.0015951,4)` on the `r text_spec("validation", color="black", background="#EEEEEE")` set. However, it is important to acknowledge that the `r text_spec("validation", color="black", background="#EEEEEE")` set spawns from January 2020 to July 2020, including a period of market turmoil due to the Covid-19 pandemic that greatly impacted markets in March 2020. [Rigorous analysis of the results][Predictions During Pre-Crisis Period (January 2020)] shows that;
+
+* During _market turmoil_, the gradient boosted trees (GBT) algorithm performs best
+* During _normal_ times, the support vector machine (SVM) algorithm with linear kernel performs best
+
+The linear [weekday effect model][Weekday Effect Model] performs second best in each scenario and appears to be most robust to changing market conditions. 
+
+Noteworthy, [in the appendix][Appendix 2: GARCH(1,1) Volatility Forecast], it is found that the industry-prevalent GARCH(1,1) model is outperformed by all models considered. 
+
+# Modeling Approach
+
+To prevent potential overtraining, the `r text_spec("training", color="black", background="#EEEEEE")` dataset is first split into `r text_spec("train", color="black", background="#EEEEEE")` and `r text_spec("test", color="black", background="#EEEEEE")` subsets. The `r text_spec("train", color="black", background="#EEEEEE")` subset is explored using summary statistics and data visualization. In the process, some variables are transformed and additional predictors are created.
+
+Secondly, different machine-learning methods are applied to estimate the conditional expectation $E[{\textrm{RV}_{t+1}|X}]$. For each method, any model variants and any tuning of parameters is done using the `r text_spec("train", color="black", background="#EEEEEE")` and `r text_spec("test", color="black", background="#EEEEEE")` sets only. 
+
+Finally, using the RMSE information on the `r text_spec("test", color="black", background="#EEEEEE")` subset, _one_ model _per algorithm_ is chosen to be fit on the complete `r text_spec("training", color="black", background="#EEEEEE")` set and evaluated on the `r text_spec("validation", color="black", background="#EEEEEE")` set. Considering the RMSE performance on the `r text_spec("validation", color="black", background="#EEEEEE")` set of each method's final model, the suitability of different algorithms to forecast volatility for the EUR/USD currency is discussed.
+
+```{r load-dataset, include = FALSE}
+# load EUR/USD volatility dataset sponsored by sharelab.com
+# NOTE: all code is designed to run on R 3.6.X (Windows machine)
+# code runs successfully on personal computer (Intel Core i7-7500U, 16GB RAM)
+
+# increase memory limit on Windows machine
+invisible(memory.limit(size = 35000))
+
+# load/install libraries
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+if(!require(ggthemes)) install.packages("ggthemes", repos = "http://cran.us.r-project.org")
+
+# load 'training' and 'validation' datasets
+load("./data/EURUSD_realized_volatility.RData")
+```
+
+# Variables in the EUR/USD Dataset
+
+Prior to data exploration, below I am giving an overview regarding the meaning, calculation and interpretation of the provided variables in the EUR/USD realized volatility dataset.
+
+```{r variable-info, echo=TRUE}
+# show variable names
+names(training)
+```
+There are 5 variables provided: 
+
+1. 'date'
+2. $RV_{t+1}$ ('rv_t1')
+3. $RV^d$ ('rv_d')
+4. $RV^w$ ('rv_w')
+5. $RV^m$ ('rv_m')
+
+$RV$ is short for 'realized volatility'. Following Corsi (2009), $RV$ for the EUR/USD exchange rate is calculated by SHARELAB LIMITED as follows:
+
+$$RV^d = \sqrt{\sum_{m=0}^{M-1} r^2_{t-\frac{m}{M}}}$$
+
+where:
+
+$RV^d$: is the one-day realized volatility for the EUR/USD quote
+
+$r_t$: is the intradaily return of the EUR/USD quote, $r_t = ln \frac{P_t}{P_{t-\frac{1}{M}}}$
+
+$M$: is the number of equally spaced returns per day, here $M=288$
+
+$ln$: is the natural logarithm
+
+$P_t$: is the EUR/USD quote at time $t$
+
+As seen above, the daily realized variance is the sum of _intradaily_, continuously compounded, squared returns. Note that there are $M=288$ returns per day, implying that intradaily returns are observed at the 5-minute interval for the 24-hour EUR/USD trading day.
+
+Both $RV^w$ and $RV^m$ are rolling, historical averages of $RV^d$. More precisely, $RV^w$ is the _weekly_ average of $RV^d$ and $RV^m$ is the _monthly_ average of $RV^d$. Note that for the EUR/USD currency pair, there are 5 trading days per week and roughly 22 trading days a month.
+
+$$RV^w = \frac{1}{5} \sum_{j=0}^{4} RV^d_{t-j}$$
+$$RV^m = \frac{1}{22} \sum_{j=0}^{21} RV^d_{t-j}$$
+
+where:
+
+$t$: current trading day (as shown in the variable 'date')
+
+$t-j$: $j^{th}$ trading day before $t$ 
+
+Note that $RV_{t+1}$ is the 'Y' variable we are trying to predict. $RV_{t+1}$ is the one-day ahead future value of daily realized volatility, $RV^d$.
+
+In conclusion, in this project we are tying to predict the next trading day's EUR/USD volatility, $RV_{t+1}$ given historical volatility measures $RV^d$, $RV^w$ and $RV^m$. For more information see Corsi, 2009.
+
+# Data Exploration
+
+Data exploration and any modeling is strictly performed on the `r text_spec("train", color="black", background="#EEEEEE")` set, which contains 90% of the observations given in the `r text_spec("training", color="black", background="#EEEEEE")` dataset.
+
+```{r create-train-test-sets, echo=TRUE}
+# split 'training' into 'train' and 'test' sets
+
+# order 'training' set by date ascending
+training <- training[order(date),]
+
+# pick 10% of (future) time-series for 'test' set
+dates_test_set <- tail(training$date, round(0.1*nrow(training)))
+test <- training[date %in% dates_test_set,]
+train <- training[!date %in% dates_test_set,]
+```
+
+## Summary Statistics
+
+First, I am describing the provided variables for the `r text_spec("train", color="black", background="#EEEEEE")` partition using summary statistics.
+
+```{r summary-stats}
+# retrieve variable names, classes and summary statistics
+var_info <- rbind(
+  class = sapply(train, class),
+    min = sapply(train, FUN = function(x){
+      round(min(x),5)
+    }),
+    max = sapply(train, FUN = function(x){
+      round(max(x),5)
+    }),
+    mean = sapply(train, FUN = function(x){
+      round(mean(x),5)
+    }),
+    median = sapply(train, FUN = function(x){
+      round(median(x),5)
+    }),
+    sd = sapply(train, FUN = function(x){
+      round(sd(x),5)
+    })
+)
+
+# format 'date'-column
+var_info[2:3,1] <- as.character(as_date(as.numeric(var_info[2:3,1])))
+var_info[4:6,1] <- rep("",3) # mean/median/sd not meaningful for dates
+
+# format var names
+colnames(var_info) <- c("date", "$\\textrm{RV}_{t+1}$", "$RV^d$", "$RV^w$", "$RV^m$")
+
+# display latex-style table
+kable(var_info, escape = FALSE, booktabs = TRUE) %>%
+  kable_styling(position = "center")
+```
+
+From the table above, we observe: 
+
+* the time-series for the `r text_spec("train", color="black", background="#EEEEEE")` partition spawns from 1 January 2010 to 31 December 2018
+* the `r text_spec("date", color="black", background="#EEEEEE")` variable is correctly formatted as `r text_spec("Date", color="black", background="#EEEEEE")` and the other variables are all `r text_spec("numeric", color="black", background="#EEEEEE")`
+* all variables are positive (the lowest value of $RV^d$ is 0.00003). This is expected as volatility is proxied by the standard deviation of the return time-series. Therefore, volatility must be greater than 0 as long as the EUR/USD returns are not constant
+* the mean value is approximately the same across daily, weekly and monthly aggregations of $RV$
+* across all $RV$ variables, the median value is slightly lower than the mean. This implies that the distribution for all measures of $RV$ is skewed to the right
+* note that $sd(RV_{t+1}) = sd(RV^d) > sd(RV^w) > sd(RV^m)$. This is expected as the monthly or weekly measures of $RV$ are computed from more observations than the daily measure, and $RV^d$ is hence noisier than $RV^w$ and $RV^m$ 
+
+```{r plot-distributions}
+## plot empirical densities
+
+# rv_t1
+p1 <- train %>%
+  ggplot(aes(x=rv_t1)) +
+  ggtitle(bquote("Empirical Density of" ~ RV[t+1])) +
+  xlab("") +
+  ylab("") +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        plot.title = element_text(size=10)) +
+  geom_density()
+
+# rv_d
+p2 <- train %>%
+  ggplot(aes(x=rv_d)) +
+  ggtitle(bquote("Empirical Density of" ~ RV^d)) +
+  xlab("") +
+  ylab("") +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        plot.title = element_text(size=10)) +
+  geom_density()
+
+# rv_w
+p3 <- train %>%
+  ggplot(aes(x=rv_w)) +
+  ggtitle(bquote("Empirical Density of" ~ RV^w)) +
+  xlab("") +
+  ylab("") +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        plot.title = element_text(size=10)) +
+  geom_density()
+
+# rv_m
+p4 <- train %>%
+  ggplot(aes(x=rv_m)) +
+  ggtitle(bquote("Empirical Density of" ~ RV^m)) +
+  xlab("") +
+  ylab("") +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        plot.title = element_text(size=10)) +
+  geom_density()
+
+grid.arrange(p1, p2, p3, p4, ncol=2)
+```
+
+The empirical densities are in line with the fact that $RV^w$ and $RV^m$ are cumulative aggregations of $RV^d$. Rare, extreme events with high volatility have greater persistence on weekly and even more so on monthly measures of volatility.
+
+## Relationship Across Variables
+
+As $RV^w$ has overlapping information with $RV^d$ and $RV^m$ has overlapping information with both $RV^w$ and $RV^d$, it is straightforward to assume that all X variables are positively correlated. This is confirmed by the correlation matrix below:
+
+```{r correlation-analysis, echo=TRUE}
+# compute Pearson correlation of features
+corr <- round(cor(train[,.(rv_t1,rv_d,rv_w,rv_m)], method="pearson"),2)
+var_names <- c("$RV_{t+1}$", "$RV^d$", "$RV^w$", "$RV^m$")
+row.names(corr) <- var_names
+colnames(corr) <- var_names
+
+# display latex-style table
+kable(corr, escape = FALSE, booktabs = TRUE) %>%
+  kable_styling(position = "center")
+```
+
+Looking at the scatter plots of the $X$ variables vs. $RV_{t+1}$ provides greater detail regarding the variables' relationship:
+
+```{r scatter-plots}
+p1 <- train %>%
+  ggplot(aes(x=rv_d, y=rv_t1)) +
+  geom_point(alpha=0.3) +
+  ggtitle(bquote("Relationship between" ~ RV^d ~ "and" ~ RV[t+1])) +
+  xlab(bquote(RV^d)) +
+  ylab(bquote(RV[t+1])) +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        plot.title = element_text(size=10),
+        axis.title=element_text(size=9, family="sans"))
+
+p2 <- train %>%
+  ggplot(aes(x=rv_w, y=rv_t1)) +
+  geom_point(alpha=0.3) +
+  ggtitle(bquote("Relationship between" ~ RV^w ~ "and" ~ RV[t+1])) +
+  xlab(bquote(RV^w)) +
+  ylab(bquote(RV[t+1])) +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        plot.title = element_text(size=10),
+        axis.title=element_text(size=9, family="sans"))
+
+p3 <- train %>%
+  ggplot(aes(x=rv_m, y=rv_t1)) +
+  geom_point(alpha=0.3) +
+  ggtitle(bquote("Relationship between" ~ RV^m ~ "and" ~ RV[t+1])) +
+  xlab(bquote(RV^m)) +
+  ylab(bquote(RV[t+1])) +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        plot.title = element_text(size=10),
+        axis.title=element_text(size=9, family="sans"))
+
+p4 <- train %>%
+  ggplot(aes(x=rv_m, y=rv_t1)) +
+  geom_point(alpha=0.3) +
+  geom_smooth() +
+  ggtitle(bquote(RV^m ~ "vs." ~ RV[t+1] ~ "(LOESS)")) +
+  xlab(bquote(RV^m)) +
+  ylab(bquote(RV[t+1])) +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        plot.title = element_text(size=10),
+        axis.title=element_text(size=9, family="sans"))
+
+grid.arrange(p1, p2, p3, p4, ncol=2)
+```
+As seen in the plots above, the relationship between the independent variables vs. $RV_{t+1}$ appears to be well approximated by a straight line. Hence, a linear model to estimate $E[{\textrm{RV}_{t+1}|X}]$ might performs well.
+
+## Stratification by Day of the Week
+
+The EUR/USD currency pair is traded from Mondays to Fridays. When information accumulates _over the weekends_, it can only impact volatility on the following Monday. Likewise, if market participants are required to close their positions _before_ the start of the weekend, this might impact Friday's volatility. Hence, it is sensible to investigate volatility dependencies with respect to days of the week.
+
+First, the variable `r text_spec("date", color="black", background="#EEEEEE")` is used to extract `r text_spec("weekday", color="black", background="#EEEEEE")`.
+
+```{r extract-weekday, echo=TRUE}
+# extract 'weekday' from 'date' variable
+train[, weekday := weekdays(date)]
+```
+
+Secondly, I am plotting 95% confidence intervals for the _mean value_ of $RV^d$ per `r text_spec("weekday", color="black", background="#EEEEEE")`. Note that stratifying $RV^d$ is equivalent to stratifying $RV_{t+1}$, but for the latter the `r text_spec("weekday", color="black", background="#EEEEEE")` is shifted by one day.
+
+```{r plot-cis-per-weekday, out.width = '75%', fig.align='center'}
+# plot CIs of average daily volatility per 'weekday'
+train %>%
+  group_by(weekday) %>%
+  mutate(mean_rv_d = mean(rv_d)) %>%
+  mutate(ci = sd(rv_d)/sqrt(nrow(train)) * qnorm(0.975)) %>%
+  mutate(weekday = factor(weekday, levels=c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday"))) %>%
+  ggplot(aes(x=weekday, y=mean_rv_d)) +
+  theme(axis.text.x = element_text(angle=-90, hjust=0, vjust=0.2)) +
+  geom_errorbar(aes(ymax = mean_rv_d + ci, ymin =  mean_rv_d - ci)) +
+  geom_hline(yintercept=mean(train$rv_d), linetype="dashed", color = "red") +
+  ggtitle(bquote("95% Confidence Intervals for Mean" ~ RV^d ~ "per Weekday")) +
+  xlab("") +
+  ylab("") + 
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title=element_text(size=15, family="sans"),
+        axis.text=element_text(size=13, family="sans"),
+        plot.title=element_text(size=15, family="sans"))
+```
+
+In the above plot, the dashed red line marks the overall mean of $RV^d$. Surprisingly, the 95% confidence interval for $\overline{RV^d}$ is _lowest_ on Mondays. It might be the case that on average, information flow on weekends is modest and risk-averse market participants close positions on Fridays, when volatility is _greater_ than on the average weekday.
+
+Note that _none_ of the 95% confidence intervals overlaps with the overall average value of `r round(mean(train$rv_d),5)`. This is reasonable evidence to assume some variability across weekdays and hence I will include the newly created `r text_spec("weekday", color="black", background="#EEEEEE")`-variable for modeling via the creation of dummy variables.
+
+$$D^i =
+    \begin{cases}
+      1, & \textrm{if}\ \textrm{weekday} = i \\
+      0, & \textrm{otherwise}
+    \end{cases}$$
+
+where:
+
+$D$: Dummy variable, $D : \Omega \to \{0,1\}$ 
+
+$i$: Value of `r text_spec("weekday", color="black", background="#EEEEEE")`, $i \in \{\textrm{Monday}, \textrm{Tuesday}, \textrm{Wednesday}, \textrm{Thursday}, \textrm{Friday}\}$
+
+To avoid perfect multicollinearity, it is necessary to only create dummy variables for $N-1$ categories of `r text_spec("weekday", color="black", background="#EEEEEE")`. Hence, I am only including dummy variables for Monday to Thursday. The library `r text_spec("fastDummies", color="black", background="#EEEEEE")` (@fastdummies) provides a convenient function for dummy variable extraction.
+
+```{r create-dummy-var, echo=TRUE}
+if(!require(fastDummies)) install.packages("fastDummies", repos = "http://cran.us.r-project.org")
+
+# create dummy variables on `train` set
+train <- dummy_cols(.data = train, select_columns = "weekday")
+
+# exclude Friday's dummy variable
+train[, weekday_Friday := NULL]
+```
+
+
+# Modeling
+
+Now that the data is sufficiently explored and additional features are created, in this section I am fitting different models on the `r text_spec("train", color="black", background="#EEEEEE")` set and check for an RMSE estimate on the `r text_spec("test", color="black", background="#EEEEEE")` set.
+
+## The Benchmark Model
+
+The benchmark model is simply the average value of $RV_{t+1}$, without using any of the other variables. It can be directly evaluated on the `r text_spec("test", color="black", background="#EEEEEE")` set.
+
+$$RV_{t+1} = \mu + \epsilon_{t+1}$$
+
+```{r benchmark-model}
+# calculate mean rv_t1
+benchmark_model <- mean(train$rv_t1)
+
+# create function to calculate RMSE
+get_rmse <- function(y_hat, y){
+  round(sqrt(mean((y-y_hat)**2)),7)
+}
+
+# compute RMSE on test set
+rmse_benchmark <- get_rmse(benchmark_model, test$rv_t1)
+```
+
+The benchmark model achieves an RMSE of `r round(rmse_benchmark,5)` on the `r text_spec("test", color="black", background="#EEEEEE")` set.
+
+## Linear Model
+
+Other features in the dataset are $RV^d$, $RV^w$, $RV^m$ and the newly created dummy variables $D^i$. In the following, I am incorporating these variables using different model variants.
+
+### HAR-RV Model
+
+For the first linear model variant, I am including all features except for the `r text_spec("weekday", color="black", background="#EEEEEE")`  dummy variables. This model is equivalent to Corsi's (2009) Heterogeneous Autoregressive model of Realized Volatility (HAR-RV).
+
+$$RV_{t+1} = \alpha + \beta^d RV^d + \beta^wRV^w + \beta^mRV^m + \epsilon_{t+1}$$
+
+```{r linear-model-har-rv}
+# fit linear model using all RV measures
+fit_har_rv <- lm(rv_t1 ~ rv_d + rv_w + rv_m, data=train)
+
+# print summary
+kable(summary(fit_har_rv)$coef, escape = TRUE, booktabs=TRUE) %>%
+  kable_styling(position = "center")
+```
+As seen above, all coefficient estimates in the HAR-RV model are significantly different from zero. Also note that all coefficients are positive, which is in line with what was discovered in the [Relationship Across Variables] section. Below, I am summarizing the model's RMSE performance on the `r text_spec("test", color="black", background="#EEEEEE")` set.
+
+
+```{r performance-summary-har-rv}
+# use fitted model to predict RV_t1 on 'test' set
+y_hat <- predict(fit_har_rv, newdata=test)
+
+# obtain RMSE on test set
+rmse_har_rv <- get_rmse(y_hat, test$rv_t1)
+
+# summarize models' performance
+models <- data.frame(Model=c("Benchmark", "HAR-RV"),
+                            Variables = c("$\\mu$","$\\alpha, RV^d, RV^w, RV^m$"), 
+                            RMSE = c(rmse_benchmark, rmse_har_rv))
+
+names(models)[3] <- "$\\text{RMSE}_{\\text{test}}$"
+models[2,3] <- paste0("\\textbf{",models[2,3],"}")
+                     
+kable(models, escape = FALSE, booktabs=TRUE) %>%
+  kable_styling(position = "center") %>%
+  pack_rows("Linear Model", 2, 2)
+```
+The HAR-RV model greatly outperforms the benchmark model. The RMSE on the `r text_spec("test", color="black", background="#EEEEEE")` set improves by `r 100*(-round((rmse_har_rv/rmse_benchmark -1),4))`%.
+
+### Weekday Effect Model
+
+For the second linear model I am adding _all_ features, including dummy variables $D^i$ for the newly created `r text_spec("weekday", color="black", background="#EEEEEE")` variable. More specifically, for 5 workdays, 4 dummy variables are introduced to capture time dependencies across weekdays as shown in the [data exploration section][Stratification by Day of the Week].
+
+$$RV_{t+1} = \alpha + \beta^d RV^d + \beta^wRV^w + \beta^mRV^m + \sum \beta_i D_i + \epsilon_{t+1}$$
+
+where $D$ is a dummy variable, and $i \in [\textrm{Monday, Wednesday, Thursday, Friday}]$.
+
+```{r linear-model-weekday-effect}
+# fit linear model using all features
+fit_weekday_linear <- lm(rv_t1 ~ rv_d + rv_w + rv_m +
+                          weekday_Monday +
+                          weekday_Tuesday +
+                          weekday_Wednesday +
+                          weekday_Thursday, data=train)
+
+# print summary
+kable(summary(fit_weekday_linear)$coef, escape = TRUE, booktabs=TRUE) %>%
+  kable_styling(position = "center")
+```
+Each dummy variable has a parameter value that is significantly different from zero ($\textrm{pval} < 0.05$). Note that after accounting for the variability across `r text_spec("weekday", color="black", background="#EEEEEE")`, the intercept of the model, $\alpha$ is _not_ significantly different from zero.
+
+```{r performance-weekday-effect}
+# create dummy variables on 'test' set
+test[, weekday := weekdays(date)]
+test <- dummy_cols(.data = test, select_columns = "weekday")
+test <- test[, weekday_Friday := NULL]
+
+# use fitted model to predict RV_t1 on 'test' set
+y_hat <- predict(fit_weekday_linear, newdata=test)
+
+# obtain RMSE on test set
+rmse_weekday_effect <- get_rmse(y_hat, test$rv_t1)
+
+# summarize models' performance
+new_model <- data.frame(Model= "Weekday Effect",
+                     Variables = "$\\alpha, RV^d, RV^w, RV^m, \\sum D_i$", 
+                     RMSE = rmse_weekday_effect)
+
+names(new_model)[3] <- "$\\text{RMSE}_{\\text{test}}$"
+models <- rbind(models, new_model)
+
+
+# highlight best performing model
+models[2,3] <- rmse_har_rv
+models[3,3] <- paste0("\\textbf{",models[3,3],"}")
+                     
+kable(models, escape = FALSE, booktabs=TRUE) %>%
+  kable_styling(position = "center") %>%
+  pack_rows("Linear Model", 2, 3)
+```
+As summarized in the table above, the weekday effect model improves RMSE performance in comparison to the HAR-RV model by `r 100*(-round((rmse_weekday_effect/rmse_har_rv -1),4))`%.
+
+## Non-Linear Methods
+
+From this section onward, I am considering more 'versatile' methods as opposed to linear regression. The advantage is that non-parametric, machine-learning models impose "no or very limited" assumptions on the data [@whitley] and provide greater flexibility in how the parameters can be used.
+
+As noted by @iriz, the `r text_spec("caret", color="black", background="#EEEEEE")`-package [@kuhn] provides a convenient way to train machine-learning algorithms using cross-validation (CV). Furthermore, the package standardizes R functions across several libraries. In the following, I am using `r text_spec("caret", color="black", background="#EEEEEE")` to tune and fit more flexible algorithms. 
+
+## Tree Ensembles
+
+In this section I am considering tree ensembles, specifically random forests (RF) and gradient boosted trees (GBT).
+
+### Random Forest
+
+The random forest algorithm is a method that fits many decision trees with randomly selected predictors and aggregates the resulting trees to form a prediction (bootstrap aggregating). This procedure reduces the instability of single regression trees (Irizarry, 2020). 
+
+The argument `r text_spec("getModelInfo('rf')$rf$parameters", color="black", background="#EEEEEE")` reveals that the random forest algorithm of the package `r text_spec("randomForest", color="black", background="#EEEEEE")` [@rf] only has one tuning parameter, i.e. `r text_spec("mtry", color="black", background="#EEEEEE")`. As mentioned above, for each decision tree that is fitted, random forest _randomly_ selects the predictors to be used. `r text_spec("mtry", color="black", background="#EEEEEE")` sets the _number_ of features to be picked at random for each tree. As there are 7 independent variables available, it is most sensible to consider a value for `r text_spec("mtry", color="black", background="#EEEEEE")`$< 7$. Using 10-fold cross-validation, I am tuning `r text_spec("mtry", color="black", background="#EEEEEE")` on the `r text_spec("train", color="black", background="#EEEEEE")` set. I am considering values `r text_spec("mtry", color="black", background="#EEEEEE")`$\in \{1,2, ..., 6\}$.
+
+The random forest algorithm to be used is developed by Breiman et all, 2018 and is available in the `r text_spec("randomForest", color="black", background="#EEEEEE")`-library.
+
+```{r random-forest-tuning, out.width = '75%', fig.align='center'}
+# load/install libraries
+if(!require(randomForest)) install.packages("randomForest", repos = "http://cran.us.r-project.org")
+
+# select all 7 features
+train_data <- train[,.(rv_t1, rv_d, rv_w, rv_m,
+                       weekday_Monday,
+                          weekday_Tuesday,
+                          weekday_Wednesday,
+                          weekday_Thursday)]
+
+# tune 'mtry' parameter using 10-fold CV
+set.seed(1, sample.kind="Rounding") # for reproducibility (R 3.6.x)
+tuning_result <- train(rv_t1 ~ ., method = "rf", data = train_data,
+               tuneGrid = data.frame(mtry = 1:6),
+               trControl = trainControl(method="cv", number=10))
+
+tuning_result$results %>%
+  ggplot(aes(x=mtry, y=RMSE)) +
+  geom_point() +
+  ggtitle("Random Forest: Tuning Number of Predictors ('mtry')") +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title=element_text(size=15, family="sans"),
+        axis.text=element_text(size=13, family="sans"),
+        plot.title=element_text(size=15, family="sans"))
+```
+Observe that the random forest model is best performing for `r text_spec("mtry", color="black", background="#EEEEEE")`$=2$. Using this parameter value, I am fitting the random forest model on the `r text_spec("train", color="black", background="#EEEEEE")` set and summarize the RMSE performance of predictions on the `r text_spec("test", color="black", background="#EEEEEE")` set.
+
+```{r performance-random-forest}
+# use fitted model (mtry=2) to predict RV_t1 on 'test' set
+y_hat <- predict(tuning_result, newdata=test)
+
+# obtain RMSE on test set
+rmse_rf <- get_rmse(y_hat, test$rv_t1)
+
+# summarize models' performance
+new_model <- data.frame(Model= "Random Forest",
+                     Variables = "$RV^d, RV^w, RV^m, \\sum D_i$; mtry = 2", 
+                     RMSE = rmse_rf)
+
+names(new_model)[3] <- "$\\text{RMSE}_{\\text{test}}$"
+models <- rbind(models, new_model)
+                     
+kable(models, escape = FALSE, booktabs=TRUE) %>%
+  kable_styling(position = "center") %>%
+  pack_rows("Linear Model", 2, 3) %>%
+  pack_rows("Tree Ensembles",4,4)
+```
+
+The well-tuned random forest model performs much better than the benchmark model, but fails to achieve an RMSE close to the performance of the linear regression variants. As noted in the [data exploration section][Relationship Across Variables], the relationship of $X$ vs. $RV_{t+1}$ appears to be well-approximated by a straight line. There seem to be limited non-linear dependencies that random forest could take advantage of. 
+
+### Gradient Boosted Trees (XGBoost)
+
+While the random forest algorithm uses grown decision trees, 'boosting' is based on shallow trees. While the random forest algorithm aims at _reducing variance_ by aggregating many, fully grown decision trees, gradient boosting aims at reducing bias of shallow trees.
+
+The [XGBoost package](https://cran.r-project.org/web/packages/xgboost/xgboost.pdf) [@xgboost] has the following tuning parameters:
+
+* `r text_spec("eta", color="black", background="#EEEEEE")`: Shrinkage of feature weights. Default value $0.3$, $\textrm{eta} \in [0,1]$
+* `r text_spec("lambda", color="black", background="#EEEEEE")` ($\lambda$): L2 regularization term on weights, default value $1$
+* `r text_spec("alpha", color="black", background="#EEEEEE")` ($\alpha$): L1 regularization term on weights, default value $0$
+* `r text_spec("nrounds", color="black", background="#EEEEEE")`: 50~150
+
+Going forward, I am accepting the default values for `r text_spec("eta", color="black", background="#EEEEEE")` and `r text_spec("nrounds", color="black", background="#EEEEEE")` and tune the $\alpha$ and $\lambda$ parameters.
+
+```{r tune-xgbLinear, out.width = '75%', fig.align='center'}
+set.seed(1, sample.kind="Rounding") # for reproducibility (R 3.6.x)
+tuning_result <- train(rv_t1 ~ .,
+                       data=train_data, 
+                       method="xgbLinear", 
+                       metric="RMSE",
+                       preProc=c("center", "scale"),
+                       objective="reg:squarederror",
+                       trControl=trainControl(method="cv",
+                                              number=5,
+                                              search = "grid"),
+                       tuneGrid = data.frame(lambda=seq(0.0024,0.025,length.out=50),
+                                            alpha=seq(0.0024,0.025,length.out=50),
+                                            nrounds=seq(150,150,length.out=50),
+                                            eta=seq(0.3,0.3,length.out=50)))
+tuning_result$results %>%
+  mutate(nrounds = as.factor(nrounds)) %>%
+  ggplot(aes(x=lambda, y=RMSE, color=alpha)) +
+  geom_point() +
+  ggtitle(bquote("xgbLinear: Tuning" ~ lambda ~ "and" ~ alpha ~ "Parameters")) +
+  theme_bw() +
+  xlab(bquote(lambda)) +
+  labs(color = bquote(alpha)) +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title=element_text(size=15, family="sans"),
+        axis.text=element_text(size=13, family="sans"),
+        plot.title=element_text(size=15, family="sans"))
+```
+As seen in the plot above, the lowest cross-validated RMSE on the `train` set is achieved for $\lambda = \alpha = 0.019$. Analog to the previous section, I am applying the model on the out-of-sample `r text_spec("test", color="black", background="#EEEEEE")` set.
+
+```{r test-RMSE-xgbLinear}
+# use best trained model to predict RV_t1 on 'test' set
+y_hat <- predict(tuning_result, newdata=test)
+
+# obtain RMSE on test set
+rmse_xgbLinear <- get_rmse(y_hat, test$rv_t1)
+
+# summarize models' performance
+new_model <- data.frame(Model= "Gradient Boosted Trees",
+                     Variables = "$RV^d, RV^w, RV^m, \\sum D_i; \\alpha = \\lambda = 0.019$", 
+                     RMSE = rmse_xgbLinear)
+
+names(new_model)[3] <- "$\\text{RMSE}_{\\text{test}}$"
+models <- rbind(models, new_model)
+                     
+kable(models, escape = FALSE, booktabs=TRUE) %>%
+  kable_styling(position = "center") %>%
+  pack_rows("Linear Model", 2, 3) %>%
+  pack_rows("Tree Ensembles",4,5)
+```
+Gradient boosting significantly outperforms random forest in terms of `r text_spec("test", color="black", background="#EEEEEE")` set's RMSE. Still, it fails to achieve the performance of the linear model variants. 
+
+## Support Vector Machine (SVM)
+
+The idea of a support vector machine algorithm is to separate those points that are hard to distinguish (i.e. points that are closest to one another). With this separation in place, points that are further away from one another are more likely to be correctly classified.
+
+Applying the SVM algorithm to many predictors can be achieved efficiently by using a kernel function. Using the `r text_spec("kernlab", color="black", background="#EEEEEE")` library [@svm], I am considering a linear kernel function and the more flexible radial basis kernel. 
+
+### Linear Kernel
+
+For the SVM algorithm with linear kernel, there is only one parameter to tune, i.e. `r text_spec("C", color="black", background="#EEEEEE")` (cost). The cost parameter determines the margin of the separating hyperplane. A low value of `r text_spec("C", color="black", background="#EEEEEE")` is associated with a large margin, a high value is associated with a small margin. Going forward, I am considering values `r text_spec("C", color="black", background="#EEEEEE")`$\in[0.5, 1.2]$.
+
+```{r tune-svm-linear, out.width = '75%', fig.align='center'}
+if(!require(kernlab)) install.packages("kernlab", repos = "http://cran.us.r-project.org")
+
+set.seed(1, sample.kind="Rounding") # for reproducibility (R 3.6.x)
+tuning_result <- train(rv_t1 ~ .,
+                       data=train_data, 
+                       method="svmLinear", 
+                       metric="RMSE",
+                       preProc=c("center", "scale"), 
+                       trControl=trainControl(method="cv",
+                                              number=25,
+                                              search = "grid"),
+                       tuneGrid = data.frame(C=seq(0.5,1.2,length.out=20)))
+# note: above warning messages are expected and there is NO error
+tuning_result$results %>%
+#  mutate(nrounds = as.factor(nrounds)) %>%
+  ggplot(aes(x=C, y=RMSE)) +
+  geom_point() +
+  ggtitle("SVM: Tuning C Parameter") +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title=element_text(size=15, family="sans"),
+        axis.text=element_text(size=13, family="sans"),
+        plot.title=element_text(size=15, family="sans"))
+```
+According to the 25-fold cross validation procedure on the `r text_spec("train", color="black", background="#EEEEEE")` set, a parameter value around $0.7$ seems to be the optimal choice (`r text_spec("C", color="black", background="#EEEEEE")`$=0.6842$).
+
+```{r test-RMSE-SVM-linear}
+# use best trained model to predict RV_t1 on 'test' set
+y_hat <- predict(tuning_result, newdata=test)
+
+# obtain RMSE on test set
+rmse_svm_linear <- get_rmse(y_hat, test$rv_t1)
+
+# summarize models' performance
+new_model <- data.frame(Model= "SVM Linear Kernel",
+                     Variables = "$RV^d, RV^w, RV^m, \\sum D_i; C = 0.6842$", 
+                     RMSE = rmse_svm_linear)
+
+names(new_model)[3] <- "$\\text{RMSE}_{\\text{test}}$"
+models <- rbind(models, new_model)
+
+# highlight best performing model
+models[3,3] <- rmse_weekday_effect
+models[6,3] <- paste0("\\textbf{",models[6,3],"}")
+                     
+kable(models, escape = FALSE, booktabs=TRUE) %>%
+  kable_styling(position = "center") %>%
+  pack_rows("Linear Model", 2, 3) %>%
+  pack_rows("Tree Ensembles",4,5) %>%
+  pack_rows("Support Vector Machine",6,6)
+```
+So far, the SVM with linear kernel achieves the best RMSE performance on the out-of-sample `r text_spec("test", color="black", background="#EEEEEE")` set. It beats the second best weekday effect model's RMSE by `r round(100*(0.0008568/0.0008178 -1),2)`%.
+
+### Radial Basis Function
+
+Below, I am tuning a SVM with the more flexible radial basis kernel. For the parameter values to be tuned, `r text_spec("C", color="black", background="#EEEEEE")` and `r text_spec("sigma", color="black", background="#EEEEEE")` ($\sigma$). For the tuning grid I am considering values `r text_spec("C", color="black", background="#EEEEEE")`$\in[3, 3.6]$ and $\sigma\in[0.003, 0.007]$.
+
+```{r tune-svm-radial-basis, out.width = '75%', fig.align='center'}
+set.seed(1, sample.kind="Rounding") # for reproducibility (R 3.6.x)
+tuning_result <- train(rv_t1 ~ .,
+                       data=train_data, 
+                       method="svmRadial", 
+                       metric="RMSE",
+                       preProc=c("center", "scale"), 
+                       trControl=trainControl(method="cv",
+                                              number=10,
+                                              search = "grid"),
+                       tuneGrid = data.frame(C=seq(3,3.6,length.out=15),
+                                             sigma=seq(0.003,0.007,length.out=15)))
+# note: above warning messages are expected and there is NO error
+tuning_result$results %>%
+#  mutate(nrounds = as.factor(nrounds)) %>%
+  ggplot(aes(x=C, y=RMSE, color=sigma)) +
+  geom_point() +
+  ggtitle(bquote("SVM: Tuning C and" ~ sigma ~ "Parameters")) +
+  theme_bw() +
+  labs(color = bquote(sigma)) +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title=element_text(size=15, family="sans"),
+        axis.text=element_text(size=13, family="sans"),
+        plot.title=element_text(size=15, family="sans"))
+```
+The optimal parameter values according to 10-fold cross-validation on the `r text_spec("train", color="black", background="#EEEEEE")` set are `r text_spec("C", color="black", background="#EEEEEE")`$= 3.3$ and $\sigma= 0.005$.
+
+```{r test-RMSE-SVM-radial}
+# use best trained model to predict RV_t1 on 'test' set
+y_hat <- predict(tuning_result, newdata=test)
+
+# obtain RMSE on test set
+rmse_svm_radial <- get_rmse(y_hat, test$rv_t1)
+
+# summarize models' performance
+new_model <- data.frame(Model= "SVM Radial Basis",
+                     Variables = "$RV^d, RV^w, RV^m, \\sum D_i; C = 3.3, \\sigma = 0.005$", 
+                     RMSE = rmse_svm_radial)
+
+names(new_model)[3] <- "$\\text{RMSE}_{\\text{test}}$"
+models <- rbind(models, new_model)
+                     
+kable(models, escape = FALSE, booktabs=TRUE) %>%
+  kable_styling(position = "center") %>%
+  pack_rows("Linear Model", 2, 3) %>%
+  pack_rows("Tree Ensembles",4,5) %>%
+  pack_rows("Support Vector Machine",6,7)
+```
+Even after excessive tuning, the radial basis function kernel of the SVM algorithm fails to outperform the linear kernel in the out-of-sample application. This is consistent with the discovery that [less flexible methods might be superior for the dataset at hand][Relationship Across Variables].
+
+## K Nearest Neighbor
+
+The k nearest neighbor algorithm classifies a data point by looking at the outcomes of the $k$ _closest_ points to it. For regression, the mean y-variable value of the k closest points is assigned. For the tuning parameter `r text_spec("k", color="black", background="#EEEEEE")` I am considering values `r text_spec("k", color="black", background="#EEEEEE")`$\in[20,36]$.
+
+```{r tune-knn-models, out.width = '75%', fig.align='center'}
+set.seed(1, sample.kind="Rounding") # for reproducibility (R 3.6.x)
+tuning_result <- train(rv_t1 ~ .,
+                       data=train_data, 
+                       method="knn", 
+                       metric="RMSE",
+                       preProc=c("center", "scale"),
+                       trControl=trainControl(method="cv",
+                                              number=20,
+                                              search = "grid"),
+                       tuneGrid = data.frame(k=20:36))
+# note: above warning messages are expected and there is NO error
+tuning_result$results %>%
+  ggplot(aes(x=k, y=RMSE)) +
+  geom_point() +
+  ggtitle("KNN: Tuning the 'k' Parameter") +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title=element_text(size=15, family="sans"),
+        axis.text=element_text(size=13, family="sans"),
+        plot.title=element_text(size=15, family="sans"))
+```
+
+According to 20-fold cross validation on the `r text_spec("train", color="black", background="#EEEEEE")` set, the optimal value for `r text_spec("k", color="black", background="#EEEEEE")` is 29.
+
+```{r test-RMSE-knn}
+# use best trained model to predict RV_t1 on 'test' set
+y_hat <- predict(tuning_result, newdata=test)
+
+# obtain RMSE on test set
+rmse_knn <- get_rmse(y_hat, test$rv_t1)
+
+# summarize models' performance
+new_model <- data.frame(Model= "KNN",
+                     Variables = "$RV^d, RV^w, RV^m, \\sum D_i; k = 29$", 
+                     RMSE = rmse_knn)
+
+names(new_model)[3] <- "$\\text{RMSE}_{\\text{test}}$"
+models <- rbind(models, new_model)
+                     
+kable(models, escape = FALSE, booktabs=TRUE) %>%
+  kable_styling(position = "center") %>%
+  pack_rows("Linear Model", 2, 3) %>%
+  pack_rows("Tree Ensembles",4,5) %>%
+  pack_rows("Support Vector Machine",6,7) %>%
+  pack_rows("K Nearest Neighbor",8,8)
+```
+
+When it comes to out-of-sample performance on the `r text_spec("test", color="black", background="#EEEEEE")` set, the KNN algorithm performs worst. In comparison to the support vector machine with linear kernel the RMSE performance is `r round(100*(0.0009446/0.0008178 -1),2)`% worse.
+
+# Validation Set Performance
+
+The table above summarizes the `test` set's RMSE performance of all models considered. The best performing models _per algorithm_ are:
+
+* Linear model: Weekday effect model, $\textrm{RMSE}_{\textrm{test}} = 0.000857$
+* Tree ensembles: Gradient boosted trees, $\textrm{RMSE}_{\textrm{test}} = 0.000897$
+* Support vector machine: SVM with linear kernel, $\bf{\textrm{RMSE}_{\textrm{test}} = 0.000818}$
+* K Nearest Neighbor (only one model considered), $\textrm{RMSE}_{\textrm{test}} = 0.000945$
+
+Going forward, these four models are fit to the _complete_ `training` set and evaluated on the `validation` set. For tuning on the `training` set, for each model, I am considering a grid range of $\pm 50\%$ of the previously obtained parameter values:
+
+```{r parameter-ranges}
+# sumamrize tuning parameter grid search values
+tbl <- data.frame(Model = c("Weekday Effect", "Gradient Boosted Trees", "SVM (Linear Kernel)", "KNN"),
+                  Parameters = c("", "$\\sigma = \\lambda = 0.019465$", "$C = 0.684211$", "$k = 29$"),
+                  Range = c("", "$[0.0097325, 0.0291975]$", "$[0.342105, 1.026315]$", "$[15, 44]$"))
+
+# format tbl header
+names(tbl) <- c("Model", "$\\textrm{Parameter}_{\\textrm{train}}$", "$\\pm 50\\%\\textrm{Parameter Range}_\\textrm{Validation}$")
+
+# outout latex-style table
+kable(tbl, escape = FALSE, booktabs=TRUE) %>%
+  kable_styling(position = "center")
+```
+For each model with parameters to be trained, the above parameter range $[a,b]$ is considered using 10-fold cross validation and a grid length of 15. This can be achieved using the `seq()`-function, e.g. for the SVM (linear kernel) `seq(0.342105, 1.026315, length.out = 15)`.
+
+```{r train-best-models-per-method}
+# extract 'weekday' variable for 'training' and 'validation' sets
+training[, weekday := weekdays(date)]
+validation[, weekday := weekdays(date)]
+
+# create dummy variables for 'training' and 'validation' sets
+training <- dummy_cols(.data = training, select_columns = "weekday")
+validation <- dummy_cols(.data = validation, select_columns = "weekday")
+
+# select features
+training_data <- training[,.(rv_t1, rv_d, rv_w, rv_m,
+                          weekday_Monday,
+                          weekday_Tuesday,
+                          weekday_Wednesday,
+                          weekday_Thursday)]
+
+
+# 1: Linear Model ('Weekday Effect')
+fit_lm <- lm(rv_t1 ~., data=training_data) # fit on 'training'
+y_hat_lm <- predict(fit_lm, newdata = validation) # predict RV_{t+1} on 'validation'
+rmse_lm <- get_rmse(y_hat = y_hat_lm, y = validation$rv_t1) # get rmse
+
+
+# 2: Tree Ensembles ('Gradient Boosted Trees')
+set.seed(1, sample.kind="Rounding") # for reproducibility (R 3.6.x)
+fit_te <- train(rv_t1 ~ .,
+                       data=training_data, 
+                       method="xgbLinear", 
+                       metric="RMSE",
+                       preProc=c("center", "scale"),
+                       objective="reg:squarederror",
+                       trControl=trainControl(search = "grid"),
+                       tuneGrid = data.frame(lambda=seq(0.0097325, 0.0291975, length.out=15), # +/- 50% previously tuned parameter
+                                            alpha=seq(0.0097325, 0.0291975, length.out=15),
+                                            nrounds=seq(150, 150, length.out=15),
+                                            eta=seq(0.3, 0.3, length.out=15)))
+
+y_hat_te <- predict(fit_te, newdata = validation) # predict RV_{t+1} on 'validation'
+rmse_te <- get_rmse(y_hat = y_hat_te, y = validation$rv_t1)
+
+
+# 3: Support Vector Machine ('Linear Kernel')
+set.seed(1, sample.kind="Rounding") # for reproducibility (R 3.6.x)
+fit_svm <- train(rv_t1 ~ .,
+                       data=training_data, 
+                       method="svmLinear", 
+                       metric="RMSE",
+                       preProc=c("center", "scale"), 
+                       trControl=trainControl(search = "grid"),
+                       tuneGrid = data.frame(C = seq(0.342105, 1.026315,length.out=15))) # +/- 50% previously tuned parameter
+y_hat_svm <- predict(fit_svm, newdata = validation) # predict RV_{t+1} on 'validation'
+rmse_svm <- get_rmse(y_hat = y_hat_svm, y = validation$rv_t1) # get rmse
+
+
+# 4: KNN
+set.seed(1, sample.kind="Rounding") # for reproducibility (R 3.6.x)
+fit_knn <- train(rv_t1 ~ .,
+                       data=training_data, 
+                       method="knn", 
+                       metric="RMSE",
+                       preProc=c("center", "scale"), 
+                       trControl=trainControl(search = "grid"),
+                       tuneGrid = data.frame(k=seq(15,44,2))) # +/- 50% previously tuned parameter
+y_hat_knn <- predict(fit_knn, newdata = validation) # predict RV_{t+1} on 'validation'
+rmse_knn <- get_rmse(y_hat = y_hat_knn, y = validation$rv_t1) # get rmse
+```
+
+```{r summarize-results}
+# summarize performance of models
+models <- cbind(models,RMSE_validation=c("","",rmse_lm,"",rmse_te, rmse_svm, "", rmse_knn))
+names(models)[4] <- "$\\text{RMSE}_{\\text{validation}}$"
+
+# highlight best models' performance
+models[,4] <- as.character(models[,4])
+models[5,4] <- paste0("\\textbf{",models[5,4],"}")
+
+# print latex-style table
+kable(models, escape = FALSE, booktabs=TRUE) %>%
+  kable_styling(position = "center") %>%
+  pack_rows("Linear Model", 2, 3) %>%
+  pack_rows("Tree Ensembles",4,5) %>%
+  pack_rows("Support Vector Machine",6,7) %>%
+  pack_rows("K Nearest Neighbor",8,8)
+```
+
+On a first look, of all methods and models considered, the gradient boosted tree algorithm performs best on the out-of-sample `validation` set. Note that on the first pseudo out-of-sample `test` set the support vector machine with linear kernel performed best. I the following, I am analyzing the results in greater detail.
+
+```{r plot-predicted-vs-actual}
+# gather actual/predicted values
+tbl <- data.table(date=validation$date, 
+           actual=validation$rv_t1, 
+           linear=y_hat_lm,
+           GBT=y_hat_te,
+           SVM=y_hat_svm,
+           KNN=y_hat_knn)
+
+# rename variables
+names(tbl)[2:5] <- c("Actual", "Linear (Weekday Effect)", "GBT", "SVM (Linear Kernel)", "KNN")
+
+# transform 'tbl' to 'tidy' format
+tbl <- tbl %>%
+        pivot_longer(!date, names_to="model", values_to="prediction") %>%
+        mutate(model = factor(model, levels = c("Actual", "Linear (Weekday Effect)", "GBT", "SVM (Linear Kernel)", "KNN")))
+
+# plot actual vs. predicted
+tbl %>%
+  ggplot(aes(x=date, y=prediction, color=model)) +
+  geom_line() +
+  scale_colour_wsj("colors6", "") + theme_wsj(color = "white") +
+  theme(axis.title=element_text(size=12, family="sans"),
+        axis.text=element_text(size=10, family="sans"),
+        plot.title=element_text(size=12, family="sans"), 
+        plot.subtitle = element_text(size=10, family="sans")) +
+  ylab(bquote(RV[t+1])) +
+  xlab("") +
+  ggtitle("Actual vs. Predicted Volatility", 
+          subtitle="January to July 2020")
+```
+In the plot above, the red line shows the actual volatility, $RV_{t+1}$, and the other lines are the different models' predictions, $\widehat{RV_{t+1}}$. The plot shows that the first few months of 2020 seem 'stable' and from March onward there is elevated EUR/USD volatility with large differences between actual and predicted values. This is due to market turmoil during the start of the covid-19 pandemic.
+
+To further investigate how the predictions of the considered models differ, I am comparing the predictions during 'normal' times (January 2020) to periods of market turmoil (March 2020).
+
+\pagebreak
+
+## Predictions During Pre-Crisis Period (January 2020)
+
+```{r actual-vs-predictions-normal}
+# filter for "January"
+tbl_jan <- tbl %>%
+            filter(month(date)==1)
+
+# 1. actual vs. linear model
+p1 <- tbl_jan %>%
+        filter(model %in% c("Actual", "Linear (Weekday Effect)")) %>%
+        ggplot(aes(x=date, y=prediction, color=model)) +
+        geom_line() +
+        scale_colour_wsj("colors6", "") +
+        ylab("") +
+        xlab("") +
+        theme(legend.position="top")
+
+# 2. actual vs. svm model
+p2 <- tbl_jan %>%
+        filter(model %in% c("Actual", "SVM (Linear Kernel)")) %>%
+        ggplot(aes(x=date, y=prediction, color=model)) +
+        geom_line() +
+        scale_colour_wsj("colors6", "") +
+        ylab("") +
+        xlab("") +
+        theme(legend.position="top")
+
+# 3. actual vs. gradien boosted trees
+p3 <- tbl_jan %>%
+        filter(model %in% c("Actual", "GBT")) %>%
+        ggplot(aes(x=date, y=prediction, color=model)) +
+        geom_line() +
+        scale_colour_wsj("colors6", "") +
+        ylab("") +
+        xlab("") +
+        theme(legend.position="top")
+
+# 4. actual vs. knn
+p4 <- tbl_jan %>%
+        filter(model %in% c("Actual", "KNN")) %>%
+        ggplot(aes(x=date, y=prediction, color=model)) +
+        geom_line() +
+        scale_colour_wsj("colors6", "") +
+        ylab("") +
+        xlab("") +
+        theme(legend.position="top")
+  
+grid.arrange(p1, p2, p3, p4, ncol=2)
+```
+During 'normal' times;
+
+* KNN-based predictions exhibit larger than actual volatility spikes
+* Gradient boosted tree (GBT) based predictions are rather flat with _too little_ variability in comparison to actual volatility
+* The linear weekday effect model and the support vector machine algorithm with linear kernel (SVM) produce volatility spikes that fall in-between the above mentioned two extremes
+* The linear weekday effect model appears to _slightly_ overestimate volatility, and GBT and KNN _greatly_ overestimate volatility
+* SVM appears to predict volatility most accurately
+
+For a more objective comparison, below I am computing the RMSE for the month of January 2020.
+```{r rmse-january}
+# gather validation set's january 2020 actuals and predictions
+jan_pred <- data.table(date=validation$date, y=validation$rv_t1, 
+                       y_hat_lm, y_hat_te, y_hat_svm, y_hat_knn)
+jan_pred <- jan_pred[month(date)==1,]
+
+# summarize validation set RMSE and over/underestimation measures
+jan_info <- rbind(
+  RMSE_validation = sapply(jan_pred[,3:6], function(y_hat){
+    round(get_rmse(y_hat = y_hat, y = jan_pred$y),7)
+  }),
+  p_overestimate = sapply(jan_pred[,3:6], function(y_hat){
+    round(mean(y_hat > jan_pred$y),7)
+  }),
+  p_underestimate = sapply(jan_pred[,3:6], function(y_hat){
+    round(mean(y_hat < jan_pred$y),7)
+  }))
+  
+# format table
+jan_info <- t(jan_info)
+col2 <- paste0(round(jan_info[,2],3)*100,"\\%")
+col3 <- paste0(round(jan_info[,3],3)*100,"\\%")
+jan_info[which(jan_info[,1]==min(jan_info[,1])),1] <- paste0("\\textbf{", jan_info[which(jan_info[,1]==min(jan_info[,1])),1], "}") # highlight lowest RMSE
+jan_info[,2] <- col2
+jan_info[,3] <- col3
+colnames(jan_info) <- c("$\\textrm{RMSE}_{\\textrm{January 2020}}$", "$\\hat{P}(\\widehat{RV_{t+1}}>RV_{t+1})$", "$\\hat{P}(\\widehat{RV_{t+1}}<RV_{t+1})$")
+row.names(jan_info) <- c("Linear Model (Weekend Effect)", "Gradient Boosted Tree", "SVM (Linear Kernel)", "KNN")
+
+# display latex-style table
+kable(jan_info, escape = FALSE, booktabs = TRUE) %>%
+  kable_styling(position = "center")
+```
+As expected by the plots above, the support vector machine (SVM) performs best in terms of RMSE. However, the linear model's performance is only `r (-1)*100*round(0.0005008/0.0005091 -1,4)`% worse and this measure is based on merely `r nrow(jan_pred)` observations. Both the linear weekend effect model and SVM overestimate volatility in 56.5% of cases. This might be a desirable property in case a 'conservative' estimate for volatility is preferred.
+
+\pagebreak
+
+## Predictions During Covid-19 Crisis (March 2020)
+
+```{r actual-vs-predictions-crisis}
+# filter for "March"
+tbl_march <- tbl %>%
+            filter(month(date)==3)
+
+# 1. actual vs. linear model
+p1 <- tbl_march %>%
+        filter(model %in% c("Actual", "Linear (Weekday Effect)")) %>%
+        ggplot(aes(x=date, y=prediction, color=model)) +
+        geom_line() +
+        scale_colour_wsj("colors6", "") +
+        ylab("") +
+        xlab("") +
+        theme(legend.position="top")
+
+# 2. actual vs. svm model
+p2 <- tbl_march %>%
+        filter(model %in% c("Actual", "SVM (Linear Kernel)")) %>%
+        ggplot(aes(x=date, y=prediction, color=model)) +
+        geom_line() +
+        scale_colour_wsj("colors6", "") +
+        ylab("") +
+        xlab("") +
+        theme(legend.position="top")
+
+# 3. actual vs. gradien boosted trees
+p3 <- tbl_march %>%
+        filter(model %in% c("Actual", "GBT")) %>%
+        ggplot(aes(x=date, y=prediction, color=model)) +
+        geom_line() +
+        scale_colour_wsj("colors6", "") +
+        ylab("") +
+        xlab("") +
+        theme(legend.position="top")
+
+# 4. actual vs. knn
+p4 <- tbl_march %>%
+        filter(model %in% c("Actual", "KNN")) %>%
+        ggplot(aes(x=date, y=prediction, color=model)) +
+        geom_line() +
+        scale_colour_wsj("colors6", "") +
+        ylab("") +
+        xlab("") +
+        theme(legend.position="top")
+  
+grid.arrange(p1, p2, p3, p4, ncol=2)
+```
+During periods of market turmoil (March 2020);
+
+* All models _underestimate_ volatility
+* Gradient boosted tree (GBT) based predictions have the greatest volatility spikes and seemingly provide the greatest accuracy
+* KNN performs worst with rather flat predictions
+* The linear weekday effect model and SVM produce very similar predictions, with the linear model's predictions being slightly more accurate as predictions are slightly shifted upwards
+
+```{r rmse-march}
+# gather validation set's january 2020 actuals and predictions
+march_pred <- data.table(date=validation$date, y=validation$rv_t1, 
+                       y_hat_lm, y_hat_te, y_hat_svm, y_hat_knn)
+march_pred <- march_pred[month(date)==3,]
+
+# summarize validation set RMSE and over/underestimation measures
+march_info <- rbind(
+  RMSE_validation = sapply(march_pred[,3:6], function(y_hat){
+    round(get_rmse(y_hat = y_hat, y = march_pred$y),7)
+  }),
+  p_overestimate = sapply(march_pred[,3:6], function(y_hat){
+    round(mean(y_hat > march_pred$y),7)
+  }),
+  p_underestimate = sapply(march_pred[,3:6], function(y_hat){
+    round(mean(y_hat < march_pred$y),7)
+  }))
+  
+# format table
+march_info <- t(march_info)
+col2 <- paste0(round(march_info[,2],3)*100,"\\%")
+col3 <- paste0(round(march_info[,3],3)*100,"\\%")
+march_info[which(march_info[,1]==min(march_info[,1])),1] <- paste0("\\textbf{", march_info[which(march_info[,1]==min(march_info[,1])),1], "}") # highlight lowest RMSE
+march_info[,2] <- col2
+march_info[,3] <- col3
+colnames(march_info) <- c("$\\textrm{RMSE}_{\\textrm{March 2020}}$", "$\\hat{P}(\\widehat{RV_{t+1}}>RV_{t+1})$", "$\\hat{P}(\\widehat{RV_{t+1}}<RV_{t+1})$")
+row.names(march_info) <- c("Linear Model (Weekend Effect)", "Gradient Boosted Tree", "SVM (Linear Kernel)", "KNN")
+
+# display latex-style table
+kable(march_info, escape = FALSE, booktabs = TRUE) %>%
+  kable_styling(position = "center")
+```
+The table above confirms what is seen in the plots. Gradient boosted trees perform best in terms of RMSE. Both GBT and the linear weekday effect model _underestimate_ volatility in 59.1% of cases, respectively. SVM and KNN perform worse and underestimate volatility to a larger extend.
+
+# Conclusion
+
+The results of this analysis produce two key results. When it comes to predicting financial volatility,
+
+1. During 'normal' times, the support vector machine algorithm with linear kernel performs best. This is confirmed by two out-of-sample datasets: The `test` set's and `validation` _pre-crisis_ period's RMSE. 
+2. During periods of severe market turmoil, the gradient boosted tree algorithm performs best. This is confirmed by investigating the out-of-sample `validation` set which is heavily impacted by the covid-19 pandemic crisis.
+
+The self-developed linear weekday effect model improves over the HAR-RV model by @har. Most importantly, the weekday effect model performs _second best_ at predicting volatility during normal and crisis times, respectively. In addition, this model is simple to train using least squares estimation. The absence of any tuning parameters and the apparent robustness across market conditions makes this model a well-suited candidate for applications in practice.
+
+As a side note, the general autoregressive model of conditional heteroskedascity (GARCH) by @garch is shown to perform worst of all models considered. For more detail, please refer to the [appendix][Appendix 2: GARCH(1,1) Volatility Forecast].  
+
+# Outlook and Potential Improvements
+
+While in the past decades modeling of volatility was primarily driven by parametric models such as the GARCH model [@garch], modern attempts use more accurate measures of volatility as inputs and non-parametric methods are considered. In the future, researchers might consider modeling volatility using _images_ of volatility time-series.
+
+When it comes to the analysis of the feature space given in the dataset for this project, there are several points that are open for future consideration.
+
+1. In this analysis, only 6 different models are considered. However, the `r text_spec("caret", color="black", background="#EEEEEE")` library [@kuhn] to date provides 238 algorithms to choose from. It is questionable that the best performing model is included in the investigated models of this paper
+2. One could extend the feature space by using _external information_, e.g. CBOE Volatility Index (VIX) quotes, event dates of an economic calendar, EUR/USD option's implied volatility
+
+Furthermore, in this application, the models are fitted _once_ on the `r text_spec("training", color="black", background="#EEEEEE")` set and then applied over the _complete period_ of the `r text_spec("validation", color="black", background="#EEEEEE")` set. A more rigorous approach would be to only predict _one day_ of the hold-out set and then re-estimating the model on a rolling basis of observations. However, this approach is computationally costly, and _each model_ considered had to be re-trained (and possibly re-tuned) `r nrow(validation)` times to obtain a RMSE measure on the `r text_spec("validation", color="black", background="#EEEEEE")` set.
+
+\pagebreak
+
+# References
+
+<div id="refs"></div>
+
+\pagebreak
+
+# Appendix 1: Financial Volatility
+
+In this section I am providing a brief exursion for those unfamiliar with financial volatility.
+
+Financial market participants trade assets such as stocks, currencies, bonds and commodities. The prices of these assets are continuously changing. These price fluctuations are measured in terms of 'volatility'. 
+
+Mathematically, volatility refers to the _standard deviation_ of the asset's _price changes_. The greater the volatility of an asset, the more _uncertainty_ there is regarding the asset's price developments.
+
+**Example**
+
+Consider two assets, A and B. In the future, asset A yields a return of \$100. For asset B, the return is going to be either \$200 or \$0 with equal probability. Note that asset A yields the same _average_ return as asset B, i.e. $100. However, for asset A there is _no risk_ of ending up with nothing. If both assets were priced equally, the _risk-averse_ investor would always choose asset A over asset B, as it has the same _average payoff_ but without any risk. In this example, asset A has a volatility of 0, while asset B has a volatility of 100:
+
+$$\sigma_B = \sqrt{\sum_{i=1}^{N}{\textrm{p}_i (x_i - \mu})^2} = \sqrt{0.5 (200 - 100)^2 + 0.5(0 - 100)^2} = 100$$
+
+The example demonstrates how greater uncertainty regarding an asset's price developments is associated with greater volatility. The greater the volatility of an asset, the more risk is borne by the investor. In theory, investors demand a 'risk premium' (a greater average return) to assume this risk. Popular risk measures such as value at risk (VaR) and expected shortfall (ES) are often modeled using an asset's volatility.
+
+## Conditional Heteroskedascity
+
+Financial volatility is not constant over time. The standard deviation of asset price changes varies and exhibits significant time-dependencies. In practice, this means that large _price changes_ of either sign are more likely to be followed by large price changes of either sign. Likewise, small price changes are likely to be followed by small price changes. Hence, volatility is _conditional_ on past volatility.
+
+$$E[\sigma_{t+1} | \sigma_t, \sigma_{t-1}, ...., \sigma_{t-n}]$$
+
+In this context, the _time-dependency_ of the standard deviation of price changes ($\sigma_t$) is referred to as _conditional heteroskedascity_.
+
+In academic literature, the GARCH model (Bollerslev, 1986) is widely used to capture the conditional heteroskedascity of financial time series. The standard GARCH model has a similar structure as the autoregressive moving average (ARMA) model. However, while an ARMA model captures the conditional mean of a process, the GARCH model captures the conditional variance of a process.
+
+When it comes to the dataset provided, we are presented with a problem to forecast volatility given different aggregations of past volatility. This calls for a supervised learning approach of modeling volatility as described in this report. In the appendix, I am merging external EUR/USD return time-series to the given dataset and compare the results of this project to the performance of a GARCH(1,1) model.
+
+\pagebreak
+
+# Appendix 2: GARCH(1,1) Volatility Forecast
+
+Using _external information_, it is possible to merge daily EUR/USD quotes, derive the continuously compounded, squared return, fit a GARCH(1,1) model on the `training` set and compare the GARCH(1,1) RMSE performance to the other algorithms on the `validation` set.
+
+```{r add-external-data}
+# load external data, daily EUR/USD close
+dt <- fread("data/EURUSD_quotes.csv", sep=",", header=TRUE, stringsAsFactors=FALSE, integer64="numeric", na.strings="")
+
+# format 'date'
+dt[, date := as.Date(date)]
+
+# compute continuously compounded returns
+dt[,close_PRIOR := shift(close,1L)]
+dt[,daily_ln_return := log(close/close_PRIOR)]
+
+# filter relevant data
+dt <- dt[, .(date, close, daily_ln_return)]
+
+# merge data to `training` and `validation` datasets
+training <- merge(training, dt, by="date", all.x=TRUE)
+validation <- merge(validation, dt, by="date", all.x=TRUE)
+```
+
+
+Considering the application at hand under the GARCH(1,1) model, the conditional variance $\sigma_t^2$ is dependent on the continuously compounded past EUR/USD return $r_{t-1}$ and the past value of $\sigma_t^2$, i.e. $\sigma_{t-1}^2$:
+
+$$\sigma_t^2 = \omega + \alpha r_{t-1}^2 + \beta \sigma_{t-1}^2$$
+
+where:
+
+$t$: Time index (here: consecutive trading days of the EUR/USD currency pair)
+$\sigma_t^2$: Conditional variance
+$\omega$: Intercept parameter
+$\alpha$: Parameter value for $r_{t-1}^2$-variable
+$\beta$: Parameter value for the lagged conditional variance $\sigma_{t-1}^2$
+$r_{t-1}^2$: Continuously compounded and squared asset return of the last observed trading day, $t-1$
+
+Note that for the GARCH(1,1) model the input variables are $r_t^2$ and $\hat\sigma_t^2$, whereas the other methods considered have a different feature space as described in the [variables][Variables in the EUR/USD Dataset] and [data exploration][Stratification by Day of the Week] sections.
+
+In this application, we are interested in 'volatility', i.e. the conditional standard deviation $\sigma_t$. Also, with data given on date $t$ we are trying to predict volatility for the next trading date, i.e. $t+1$. Hence, the time index is shifted by one day:
+
+$$\sigma_{t+1} = \sqrt{\omega + \alpha r_{t}^2 + \beta \sigma_{t}^2}$$
+
+The `garchFit` function of the fGarch` library conveniently estimates the parameter values $\hat\omega$, $\hat\alpha$ and $\hat\beta$ using maximum log-likelihood estimation.
+
+Analog to the previous procedures, I am fitting the GARCH(1,1) model on the `training` set and investigate the prediction performance on the `validation` set.
+
+**Estimated Parameter Values**
+
+```{r fit-garch-1-1}
+if(!require(fGarch)) install.packages("fGarch", repos = "http://cran.us.r-project.org")
+
+# fit GARCH(1,1) on `training` set
+fit_garch <- garchFit(formula = ~garch(1,1), 
+                      data = training$daily_ln_return,
+                      trace = FALSE, include.mean=FALSE)
+
+# print parameter estimates
+tbl <- as.data.frame(t(coef(fit_garch)))
+names(tbl) <- c("$\\hat\\omega$", "$\\hat\\alpha$", "$\\hat\\beta$")
+
+# display latex-style table
+kable(tbl, escape = FALSE, booktabs = TRUE) %>%
+  kable_styling(position = "center")
+```
+
+## GARCH(1,1) Out-of-Sample Performance
+
+```{r garch-predictions}
+# extract estimates
+omega <- fit_garch@fit$matcoef[1,1]
+alpha <- fit_garch@fit$matcoef[2,1]
+beta <- fit_garch@fit$matcoef[3,1]
+
+# obtain most recent `training`-set's values for sigma_t and xt for initial prediction
+sigma_t <- tail(fit_garch@sigma.t, 1)
+xt <- tail(training$daily_ln_return, 1)
+
+## manually predict sigma_{t+1} on out-of-sample `validation` set
+
+# set up 'results' table with x_t and to be predicted sigma_{t+1} as model inputs
+results <- data.table(date=validation$date, x_t=validation$daily_ln_return, sigma_t1 = NA)
+
+# first prediction is based on last `training` set's observations 
+results$sigma_t1[1] <- sqrt(omega + alpha*xt^2 + beta*sigma_t^2)
+
+# loop remaining predictions
+for (i in 2:nrow(results)){
+  results$sigma_t1[i] <- sqrt(omega + alpha*results$x_t[i]^2 + beta*results$sigma_t1[i-1]^2)
+}
+
+# compute `validation` RMSE
+rmse_garch <- get_rmse(y_hat = results$sigma_t1, y = validation$rv_t1) # get rmse
+
+# summarize performance of models
+new_model <- data.frame(Model= "GARCH(1,1)",
+                     Variables = "$r_{t}^2, \\sigma_{t}^2$", 
+                     RMSE_test = "",
+                     RMSE_validation = rmse_garch)
+
+names(new_model)[3:4] <- c("$\\text{RMSE}_{\\text{test}}$","$\\text{RMSE}_{\\text{validation}}$") 
+models <- rbind(models, new_model)
+
+# print latex-style table
+kable(models, escape = FALSE, booktabs=TRUE) %>%
+  kable_styling(position = "center") %>%
+  pack_rows("Linear Model", 2, 3) %>%
+  pack_rows("Tree Ensembles",4,5) %>%
+  pack_rows("Support Vector Machine",6,7) %>%
+  pack_rows("K Nearest Neighbor",8,8) %>%
+  pack_rows("Appendix: GARCH(1,1) Model",9,9)
+```
+
+As seen in the plot above, the GARCH(1,1) model fails to achieve the performanc of all other methods considered.
+
+Below, I am visualizing the _out-of-sample_ `validation` predictions $\hat\sigma_{t+1}$ vs. the actual (realized) volatility $RV_{t+1}$.
+
+```{r garch-plot}
+# predicted vs. actuals
+# gather actual/predicted values
+tbl <- data.table(date=validation$date, 
+           actual=validation$rv_t1, 
+           garch=results$sigma_t1)
+
+# rename variables
+names(tbl)[2:3] <- c("Actual", "GARCH(1,1)")
+
+# transform 'tbl' to 'tidy' format
+tbl_all <- tbl %>%
+        pivot_longer(!date, names_to="model", values_to="prediction")
+
+# plot actual vs. predicted
+p1 <-tbl_all %>%
+  ggplot(aes(x=date, y=prediction, color=model)) +
+  geom_line() +
+  scale_colour_wsj("colors6", "") + theme_wsj(color = "white") +
+  theme(axis.title=element_text(size=12, family="sans"),
+        axis.text=element_text(size=10, family="sans"),
+        plot.title= NULL, 
+        plot.subtitle = NULL) +
+  ylab(bquote(RV[t+1])) +
+  xlab("")
+
+# 'normal' period
+tbl_jan <- tbl[month(date)==1,] # january 2020
+
+# transform 'tbl_jan' to 'tidy' format
+tbl_jan <- tbl_jan %>%
+        pivot_longer(!date, names_to="model", values_to="prediction")
+
+p2 <- tbl_jan %>%
+        ggplot(aes(x=date, y=prediction, color=model)) +
+        geom_line() +
+        scale_colour_wsj("colors6", "") +
+        ylab("") +
+        xlab("") +
+        ggtitle("Pre-Crisis Period (January 2020)") +
+        theme(legend.position="none",
+              plot.title=element_text(size=10, family="sans"))
+
+# 'crisis' period
+tbl_march <- tbl[month(date)==3,] # march 2020
+
+# transform 'tbl_jan' to 'tidy' format
+tbl_march <- tbl_march %>%
+        pivot_longer(!date, names_to="model", values_to="prediction")
+
+p3 <- tbl_march %>%
+        ggplot(aes(x=date, y=prediction, color=model)) +
+        geom_line() +
+        scale_colour_wsj("colors6", "") +
+        ylab("") +
+        xlab("") +
+        ggtitle("Covid-19 Crisis (March 2020)") +
+        theme(legend.position="none",
+              plot.title=element_text(size=10, family="sans"))
+
+if(!require(gridExtra)) install.packages("gridExtra", repos = "http://cran.us.r-project.org")
+library(gridExtra)
+layout <- rbind(c(1,1),
+                c(2,3))
+grid.arrange(p1,p2,p3, layout_matrix = layout)
+```
+The plots show that;
+
+* The GARCH(1,1) model's predictions are rather flat and fail to match the actual volatility spikes by a great margin
+* During 'normal' times, the GARCH(1,1) model, on average, seems to neither under- nor overestimating volatility
+* During times of market turmoil, the GARCH(1,1) model greatly underestimates volatility
+
+In conclusion, the GARCH(1,1) model based on squared asset returns is outperformed by all models considered in this paper (excluding the constant benchmark 'mean' model).
