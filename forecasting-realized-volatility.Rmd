@@ -102,8 +102,12 @@ library(randomForest)
 library(kernlab)
 library(xgboost)
 
-# load 'training' and 'validation' datasets
-load("./data/EURUSD_realized_volatility.RData")
+# download dataset from GitHub, load data and delete file from hard disk drive (all relative paths)
+url <- "https://raw.githubusercontent.com/csatzky/forecasting-realized-volatility-using-supervised-learning/main/data/EURUSD_realized_volatility.RData"
+temp_name <- tempfile()
+download.file(url, temp_name)
+load(temp_name)
+file.remove(temp_name) # remove temporary file
 ```
 
 # Variables in the EUR/USD Dataset
@@ -1233,8 +1237,20 @@ When it comes to the dataset provided, we are presented with a problem to foreca
 Using _external information_, it is possible to merge daily EUR/USD quotes, derive the continuously compounded, squared return, fit a GARCH(1,1) model on the `training` set and compare the GARCH(1,1) RMSE performance to the other algorithms on the `validation` set.
 
 ```{r add-external-data}
-# load external data, daily EUR/USD close
-dt <- fread("data/EURUSD_quotes.csv", sep=",", header=TRUE, stringsAsFactors=FALSE, integer64="numeric", na.strings="")
+# load libraries
+if(!require(fGarch)) install.packages("fGarch", repos = "http://cran.us.r-project.org")
+library(fGarch)
+
+# download daily EUR/USD quotes from GitHub
+url <- "https://raw.githubusercontent.com/csatzky/forecasting-realized-volatility-using-supervised-learning/main/data/EURUSD_quotes.csv"
+temp_name <- tempfile()
+download.file(url, temp_name)
+
+# read external data, daily EUR/USD close
+dt <- fread(temp_name, sep=",", header=TRUE, stringsAsFactors=FALSE, integer64="numeric", na.strings="")
+
+# remove temporary file
+file.remove(temp_name)
 
 # format 'date'
 dt[, date := as.Date(date)]
@@ -1278,9 +1294,6 @@ Analog to the previous procedures, I am fitting the GARCH(1,1) model on the `tra
 **Estimated Parameter Values**
 
 ```{r fit-garch-1-1}
-if(!require(fGarch)) install.packages("fGarch", repos = "http://cran.us.r-project.org")
-library(fGarch)
-
 # fit GARCH(1,1) on `training` set
 fit_garch <- garchFit(formula = ~garch(1,1), 
                       data = training$daily_ln_return,
