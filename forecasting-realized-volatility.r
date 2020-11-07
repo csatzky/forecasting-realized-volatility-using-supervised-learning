@@ -374,7 +374,7 @@ kable(march_info, escape = FALSE, booktabs = TRUE)
 if(!require(fGarch)) install.packages("fGarch", repos = "http://cran.us.r-project.org")
 library(fGarch)
 
-# download dataset from GitHub, load data and delete file from hard disk drive
+# download daily EUR/USD quotes from GitHub
 url <- "https://raw.githubusercontent.com/csatzky/forecasting-realized-volatility-using-supervised-learning/main/data/EURUSD_quotes.csv"
 temp_name <- tempfile()
 download.file(url, temp_name)
