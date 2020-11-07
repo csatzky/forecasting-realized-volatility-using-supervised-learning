@@ -625,7 +625,7 @@ tuning_result$results %>%
         axis.text=element_text(size=13, family="sans"),
         plot.title=element_text(size=15, family="sans"))
 ```
-As seen in the plot above, the lowest cross-validated RMSE on the `train` set is achieved for $\lambda = \alpha = 0.019$. Analog to the previous section, I am applying the model on the out-of-sample `r text_spec("test", color="black", background="#EEEEEE")` set.
+As seen in the plot above, the lowest cross-validated RMSE on the `r text_spec("train", color="black", background="#EEEEEE")` set is achieved for $\lambda = \alpha = 0.019$. Analog to the previous section, I am applying the model on the out-of-sample `r text_spec("test", color="black", background="#EEEEEE")` set.
 
 ```{r test-RMSE-xgbLinear}
 # use best trained model to predict RV_t1 on 'test' set
@@ -826,14 +826,14 @@ When it comes to out-of-sample performance on the `r text_spec("test", color="bl
 
 # Validation Set Performance
 
-The table above summarizes the `test` set's RMSE performance of all models considered. The best performing models _per algorithm_ are:
+The table above summarizes the `r text_spec("test", color="black", background="#EEEEEE")` set's RMSE performance of all models considered. The best performing models _per algorithm_ are:
 
 * Linear model: Weekday effect model, $\textrm{RMSE}_{\textrm{test}} = 0.000857$
 * Tree ensembles: Gradient boosted trees, $\textrm{RMSE}_{\textrm{test}} = 0.000897$
 * Support vector machine: SVM with linear kernel, $\bf{\textrm{RMSE}_{\textrm{test}} = 0.000818}$
 * K Nearest Neighbor (only one model considered), $\textrm{RMSE}_{\textrm{test}} = 0.000945$
 
-Going forward, these four models are fit to the _complete_ `training` set and evaluated on the `validation` set. For tuning on the `training` set, for each model, I am considering a grid range of $\pm 50\%$ of the previously obtained parameter values:
+Going forward, these four models are fit to the _complete_ `r text_spec("training", color="black", background="#EEEEEE")` set and evaluated on the `r text_spec("validation", color="black", background="#EEEEEE")` set. For tuning on the `r text_spec("training", color="black", background="#EEEEEE")` set, for each model, I am considering a grid range of $\pm 50\%$ of the previously obtained parameter values:
 
 ```{r parameter-ranges}
 # sumamrize tuning parameter grid search values
@@ -935,7 +935,7 @@ kable(models, escape = FALSE, booktabs=TRUE) %>%
   pack_rows("K Nearest Neighbor",8,8)
 ```
 
-On a first look, of all methods and models considered, the gradient boosted tree algorithm performs best on the out-of-sample `validation` set. Note that on the first pseudo out-of-sample `test` set the support vector machine with linear kernel performed best. I the following, I am analyzing the results in greater detail.
+On a first look, of all methods and models considered, the gradient boosted tree algorithm performs best on the out-of-sample `r text_spec("validation", color="black", background="#EEEEEE")` set. Note that on the first pseudo out-of-sample `r text_spec("test", color="black", background="#EEEEEE")` set the support vector machine with linear kernel performed best. I the following, I am analyzing the results in greater detail.
 
 ```{r plot-predicted-vs-actual}
 # gather actual/predicted values
@@ -947,7 +947,7 @@ tbl <- data.table(date=validation$date,
            KNN=y_hat_knn)
 
 # rename variables
-names(tbl)[2:5] <- c("Actual", "Linear (Weekday Effect)", "GBT", "SVM (Linear Kernel)", "KNN")
+names(tbl)[2:6] <- c("Actual", "Linear (Weekday Effect)", "GBT", "SVM (Linear Kernel)", "KNN")
 
 # transform 'tbl' to 'tidy' format
 tbl <- tbl %>%
@@ -1162,8 +1162,8 @@ The table above confirms what is seen in the plots. Gradient boosted trees perfo
 
 The results of this analysis produce two key results. When it comes to predicting financial volatility,
 
-1. During 'normal' times, the support vector machine algorithm with linear kernel performs best. This is confirmed by two out-of-sample datasets: The `test` set's and `validation` _pre-crisis_ period's RMSE. 
-2. During periods of severe market turmoil, the gradient boosted tree algorithm performs best. This is confirmed by investigating the out-of-sample `validation` set which is heavily impacted by the covid-19 pandemic crisis.
+1. During 'normal' times, the support vector machine algorithm with linear kernel performs best. This is confirmed by two out-of-sample datasets: The `r text_spec("test", color="black", background="#EEEEEE")` set's and `r text_spec("validation", color="black", background="#EEEEEE")` _pre-crisis_ period's RMSE. 
+2. During periods of severe market turmoil, the gradient boosted tree algorithm performs best. This is confirmed by investigating the out-of-sample `r text_spec("validation", color="black", background="#EEEEEE")` set which is heavily impacted by the covid-19 pandemic crisis.
 
 The self-developed linear weekday effect model improves over the HAR-RV model by @har. Most importantly, the weekday effect model performs _second best_ at predicting volatility during normal and crisis times, respectively. In addition, this model is simple to train using least squares estimation. The absence of any tuning parameters and the apparent robustness across market conditions makes this model a well-suited candidate for applications in practice.
 
@@ -1220,7 +1220,7 @@ When it comes to the dataset provided, we are presented with a problem to foreca
 
 # Appendix 2: GARCH(1,1) Volatility Forecast
 
-Using _external information_, it is possible to merge daily EUR/USD quotes, derive the continuously compounded, squared return, fit a GARCH(1,1) model on the `training` set and compare the GARCH(1,1) RMSE performance to the other algorithms on the `validation` set.
+Using _external information_, it is possible to merge daily EUR/USD quotes, derive the continuously compounded, squared return, fit a GARCH(1,1) model on the `r text_spec("training", color="black", background="#EEEEEE")` set and compare the GARCH(1,1) RMSE performance to the other algorithms on the `r text_spec("validation", color="black", background="#EEEEEE")` set.
 
 ```{r add-external-data}
 # load external data, daily EUR/USD close
@@ -1263,7 +1263,7 @@ $$\sigma_{t+1} = \sqrt{\omega + \alpha r_{t}^2 + \beta \sigma_{t}^2}$$
 
 The `garchFit` function of the fGarch` library conveniently estimates the parameter values $\hat\omega$, $\hat\alpha$ and $\hat\beta$ using maximum log-likelihood estimation.
 
-Analog to the previous procedures, I am fitting the GARCH(1,1) model on the `training` set and investigate the prediction performance on the `validation` set.
+Analog to the previous procedures, I am fitting the GARCH(1,1) model on the `r text_spec("training", color="black", background="#EEEEEE")` set and investigate the prediction performance on the `r text_spec("validation", color="black", background="#EEEEEE")` set.
 
 **Estimated Parameter Values**
 
@@ -1333,7 +1333,7 @@ kable(models, escape = FALSE, booktabs=TRUE) %>%
 
 As seen in the plot above, the GARCH(1,1) model fails to achieve the performanc of all other methods considered.
 
-Below, I am visualizing the _out-of-sample_ `validation` predictions $\hat\sigma_{t+1}$ vs. the actual (realized) volatility $RV_{t+1}$.
+Below, I am visualizing the _out-of-sample_ `r text_spec("validation", color="black", background="#EEEEEE")` predictions $\hat\sigma_{t+1}$ vs. the actual (realized) volatility $RV_{t+1}$.
 
 ```{r garch-plot}
 # predicted vs. actuals
