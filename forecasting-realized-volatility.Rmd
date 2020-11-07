@@ -400,7 +400,7 @@ $D$: Dummy variable, $D : \Omega \to \{0,1\}$
 
 $i$: Value of `weekday`, $i \in \{\textrm{Monday}, \textrm{Tuesday}, \textrm{Wednesday}, \textrm{Thursday}, \textrm{Friday}\}$
 
-To avoid perfect multicollinearity, it is necessary to only create dummy variables for $N-1$ categories of `weekday`. Hence, I am only including dummy variables for Monday to Thursday. The library `fastDummies` (@fastdummies) provides a convenient function for dummy variable extraction.
+To avoid perfect multicollinearity, it is necessary to only create dummy variables for $N-1$ categories of `weekday`. Hence, I am only including dummy variables for Monday to Thursday. The library `fastDummies` [@fastdummies] provides a convenient function for dummy variable extraction.
 
 ```{r create-dummy-var, echo=TRUE}
 # create dummy variables on `train` set
@@ -543,7 +543,7 @@ In this section I am considering tree ensembles, specifically random forests (RF
 
 ### Random Forest
 
-The random forest algorithm is a method that fits many decision trees with randomly selected predictors and aggregates the resulting trees to form a prediction (bootstrap aggregating). This procedure reduces the instability of single regression trees (Irizarry, 2020). 
+The random forest algorithm is a method that fits many decision trees with randomly selected predictors and aggregates the resulting trees to form a prediction (bootstrap aggregating). This procedure reduces the instability of single regression trees [@iriz]. 
 
 The argument `getModelInfo('rf')$rf$parameters` reveals that the random forest algorithm of the package `randomForest` [@rf] only has one tuning parameter, i.e. `mtry`. As mentioned above, for each decision tree that is fitted, random forest _randomly_ selects the predictors to be used. `mtry` sets the _number_ of features to be picked at random for each tree. As there are 7 independent variables available, it is most sensible to consider a value for `mtry`$< 7$. Using 10-fold cross-validation, I am tuning `mtry` on the `train` set. I am considering values `mtry`$\in \{1,2, ..., 6\}$.
 
