@@ -60,7 +60,7 @@ rmse_lm <- get_rmse(y_hat = y_hat_lm, y = validation$rv_t1)
 # for reproducibility (R 3.6.x)
 set.seed(1, sample.kind="Rounding")
 
-# tune alpha and lambda parameters on `training` set (for details, see *.Rmd or *.PDF report)
+# tune alpha and lambda parameters on `training` set [TAKES ~ 3 MINUTES] (for details, see *.Rmd or *.PDF report)
 fit_te <- train(rv_t1 ~ .,
                 data=training_data, 
                 method="xgbLinear", 
@@ -85,7 +85,7 @@ rmse_te <- get_rmse(y_hat = y_hat_te, y = validation$rv_t1)
 # for reproducibility (R 3.6.x)
 set.seed(1, sample.kind="Rounding")
 
-# tune C (cost) parameter on `training` set (for details, see *.Rmd or *.PDF report)
+# tune C (cost) parameter on `training` set [TAKES ~ 3 MINUTES] (for details, see *.Rmd or *.PDF report)
 fit_svm <- train(rv_t1 ~ .,
                  data=training_data, 
                  method="svmLinear", 
@@ -106,7 +106,7 @@ rmse_svm <- get_rmse(y_hat = y_hat_svm, y = validation$rv_t1)
 # for reproducibility (R 3.6.x)
 set.seed(1, sample.kind="Rounding")
 
-# tune k parameter on `training` set (for details, see *.Rmd or *.PDF report)
+# tune k parameter on `training` set [TAKES ~ 2 MINUTES] (for details, see *.Rmd or *.PDF report)
 fit_knn <- train(rv_t1 ~ .,
                  data=training_data, 
                  method="knn", 
