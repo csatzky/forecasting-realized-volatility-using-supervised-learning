@@ -31,10 +31,12 @@ library(randomForest)
 library(kernlab)
 library(xgboost)
 
+
 # create function to calculate RMSE
 get_rmse <- function(y_hat, y){
   round(sqrt(mean((y-y_hat)**2)),7)
 }
+
 
 # download dataset from GitHub, load data and delete file from hard disk drive (all relative paths)
 url <- "https://raw.githubusercontent.com/csatzky/forecasting-realized-volatility-using-supervised-learning/main/data/EURUSD_realized_volatility.RData"
