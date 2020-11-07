@@ -1381,7 +1381,7 @@ p2 <- tbl_jan %>%
 # 'crisis' period
 tbl_march <- tbl[month(date)==3,] # march 2020
 
-# transform 'tbl_jan' to 'tidy' format
+# transform 'tbl_march' to 'tidy' format
 tbl_march <- tbl_march %>%
         pivot_longer(!date, names_to="model", values_to="prediction")
 
