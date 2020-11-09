@@ -2,7 +2,7 @@
 title: "Forecasting EUR/USD Volatility Using Supervised Learning"
 subtitle: "Capstone Project – HarvardX Data Science Program"
 author: "[Christian Satzky](https://www.linkedin.com/in/christian-satzky/), edX ID CS87"
-date: "`r format(Sys.time(), '%d %B %Y')`"
+date: "`r paste0("This version: ",format(Sys.time(), '%d %B %Y'))`"
 output:
   pdf_document:
     keep_tex: yes
@@ -32,7 +32,7 @@ All code is _fully reproducible_ and all steps that led to the results are docum
 
 # Introduction and Objective
 
-This project deals with predicting EUR/USD volatility using supervised learning. For those unfamiliar with the topic of financial volatility and/or its scientific measurement, I am providing [an excursion in the appendix][Appendix 1: Financial Volatility] which you may like to read before continuing with this paper.
+This project deals with predicting EUR/USD volatility using supervised learning. For those unfamiliar with the topic of financial volatility and/or its measurement, I am providing [an excursion in the appendix][Appendix 1: Financial Volatility] which you may like to read before continuing with this paper.
 
 Accurate forecasting of volatility is crucial for the pricing of financial derivatives, portfolio allocation and effective risk management. The goal of this project is to find machine-learning methods that are best suited for volatility forecasting.
 
@@ -484,7 +484,7 @@ For the second linear model I am adding _all_ features, including dummy variable
 
 $$RV_{t+1} = \alpha + \beta^d RV^d + \beta^wRV^w + \beta^mRV^m + \sum \beta_i D_i + \epsilon_{t+1}$$
 
-where $D$ is a dummy variable, and $i \in [\textrm{Monday, Wednesday, Thursday, Friday}]$.
+where $D$ is a dummy variable, and $i \in [\textrm{Monday, Tuesday, Wednesday, Thursday}]$.
 
 ```{r linear-model-weekday-effect}
 # fit linear model using all features
@@ -982,7 +982,7 @@ tbl %>%
   ggtitle("Actual vs. Predicted Volatility", 
           subtitle="January to July 2020")
 ```
-In the plot above, the red line shows the actual volatility, $RV_{t+1}$, and the other lines are the different models' predictions, $\widehat{RV_{t+1}}$. The plot shows that the first few months of 2020 seem 'stable' and from March onward there is elevated EUR/USD volatility with large differences between actual and predicted values. This is due to market turmoil during the start of the covid-19 pandemic.
+In the plot above, the red line shows the actual volatility, $RV_{t+1}$, and the other lines are the different models' predictions, $\widehat{RV_{t+1}}$. The plot shows that the first few months of 2020 seem 'stable' and from March onward there is elevated EUR/USD volatility with large differences between actual and predicted values. This is due to market turmoil during the start of the Covid-19 pandemic.
 
 To further investigate how the predictions of the considered models differ, I am comparing the predictions during 'normal' times (January 2020) to periods of market turmoil (March 2020).
 
@@ -1177,7 +1177,7 @@ The table above confirms what is seen in the plots. Gradient boosted trees perfo
 The results of this analysis produce two key results. When it comes to predicting financial volatility,
 
 1. During 'normal' times, the support vector machine algorithm with linear kernel performs best. This is confirmed by two out-of-sample datasets: The `test` set's and `validation` _pre-crisis_ period's RMSE. 
-2. During periods of severe market turmoil, the gradient boosted tree algorithm performs best. This is confirmed by investigating the out-of-sample `validation` set which is heavily impacted by the covid-19 pandemic crisis.
+2. During periods of severe market turmoil, the gradient boosted tree algorithm performs best. This is confirmed by investigating the out-of-sample `validation` set which is heavily impacted by the Covid-19 pandemic crisis.
 
 The self-developed linear weekday effect model improves over the HAR-RV model by @har. Most importantly, the weekday effect model performs _second best_ at predicting volatility during normal and crisis times, respectively. In addition, this model is simple to train using least squares estimation. The absence of any tuning parameters and the apparent robustness across market conditions makes this model a well-suited candidate for applications in practice.
 
@@ -1236,7 +1236,7 @@ When it comes to the dataset provided, we are presented with a problem to foreca
 
 Using _external information_, it is possible to merge daily EUR/USD quotes, derive the continuously compounded, squared return, fit a GARCH(1,1) model on the `training` set and compare the GARCH(1,1) RMSE performance to the other algorithms on the `validation` set.
 
-```{r add-external-data}
+```{r add-external-data, include=FALSE}
 # load libraries
 if(!require(fGarch)) install.packages("fGarch", repos = "http://cran.us.r-project.org")
 library(fGarch)
@@ -1275,10 +1275,15 @@ $$\sigma_t^2 = \omega + \alpha r_{t-1}^2 + \beta \sigma_{t-1}^2$$
 where:
 
 $t$: Time index (here: consecutive trading days of the EUR/USD currency pair)
+
 $\sigma_t^2$: Conditional variance
+
 $\omega$: Intercept parameter
+
 $\alpha$: Parameter value for $r_{t-1}^2$-variable
+
 $\beta$: Parameter value for the lagged conditional variance $\sigma_{t-1}^2$
+
 $r_{t-1}^2$: Continuously compounded and squared asset return of the last observed trading day, $t-1$
 
 Note that for the GARCH(1,1) model the input variables are $r_t^2$ and $\hat\sigma_t^2$, whereas the other methods considered have a different feature space as described in the [variables][Variables in the EUR/USD Dataset] and [data exploration][Stratification by Day of the Week] sections.
