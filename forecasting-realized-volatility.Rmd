@@ -1185,7 +1185,7 @@ As a side note, the general autoregressive model of conditional heteroskedascity
 
 # Outlook and Potential Improvements
 
-While in the past decades modeling of volatility was primarily driven by parametric models such as the GARCH model [@garch], modern attempts use more accurate measures of volatility as inputs and non-parametric methods are considered. In the future, researchers might consider modeling volatility using _images_ of volatility time-series.
+While in the past decades modeling of volatility was primarily driven by parametric models such as the GARCH model [@garch], modern attempts use more accurate measures of volatility as inputs and non-parametric methods for modeling are considered. In the future, researchers might consider modeling volatility using _images_ of volatility time-series.
 
 When it comes to the analysis of the feature space given in the dataset for this project, there are several points that are open for future consideration.
 
