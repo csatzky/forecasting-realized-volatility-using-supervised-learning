@@ -2,7 +2,7 @@
 title: "Forecasting EUR/USD Volatility Using Supervised Learning"
 subtitle: "Capstone Project – HarvardX Data Science Program"
 author: "[Christian Satzky](https://www.linkedin.com/in/christian-satzky/), edX ID CS87"
-date: "`r paste0("This version: ",format(Sys.time(), '%d %B %Y'))`"
+date: "`r format(Sys.time(), '%d %B %Y')`"
 output:
   pdf_document:
     keep_tex: yes
