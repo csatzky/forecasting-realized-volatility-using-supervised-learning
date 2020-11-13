@@ -1,7 +1,7 @@
 ---
 title: "Forecasting EUR/USD Volatility Using Supervised Learning"
 subtitle: "Capstone Project – HarvardX Data Science Program"
-author: "[Christian Satzky](https://www.linkedin.com/in/christian-satzky/), edX ID CS87"
+author: "[Christian Satzky](https://www.linkedin.com/in/christian-satzky/)"
 date: "`r format(Sys.time(), '%d %B %Y')`"
 output:
   pdf_document:
@@ -53,7 +53,7 @@ When it comes to modeling, four general methods are considered: Linear regressio
 * Support vector machine (SVM): [SVM with linear kernel][Linear Kernel]
 * [K-nearest neighbor][K Nearest Neighbor] (only one model considered)
 
-Of all methods and models considered, the gradient boosted tree algorithm performs best with an RMSE of `r round(0.0015951,4)` on the `validation` set. However, it is important to acknowledge that the `validation` set spawns from January 2020 to July 2020, including a period of market turmoil due to the Covid-19 pandemic that greatly impacted markets in March 2020. [Rigorous analysis of the results][Predictions During Pre-Crisis Period (January 2020)] shows that;
+Of all methods and models considered, the gradient boosted tree algorithm performs best with an RMSE of `r round(0.0015951,4)` on the `validation` set. However, the `validation` set includes a period of market turmoil due to the Covid-19 pandemic that greatly impacted markets in March 2020. [Rigorous analysis of the results][Predictions During Pre-Crisis Period (January 2020)] shows that;
 
 * During _market turmoil_, the gradient boosted trees (GBT) algorithm performs best
 * During _normal_ times, the support vector machine (SVM) algorithm with linear kernel performs best
@@ -979,8 +979,8 @@ tbl %>%
         plot.subtitle = element_text(size=10, family="sans")) +
   ylab(bquote(RV[t+1])) +
   xlab("") +
-  ggtitle("Actual vs. Predicted Volatility", 
-          subtitle="January to July 2020")
+  ggtitle("Actual vs. Predicted EUR/USD Volatility", 
+          subtitle="Out-of-Sample Validation Set, Jan-Jul 2020")
 ```
 In the plot above, the red line shows the actual volatility, $RV_{t+1}$, and the other lines are the different models' predictions, $\widehat{RV_{t+1}}$. The plot shows that the first few months of 2020 seem 'stable' and from March onward there is elevated EUR/USD volatility with large differences between actual and predicted values. This is due to market turmoil during the start of the Covid-19 pandemic.
 
@@ -1174,10 +1174,10 @@ The table above confirms what is seen in the plots. Gradient boosted trees perfo
 
 # Conclusion
 
-The results of this analysis produce two key results. When it comes to predicting financial volatility,
+When it comes to predicting financial volatility,
 
-1. During 'normal' times, the support vector machine algorithm with linear kernel performs best. This is confirmed by two out-of-sample datasets: The `test` set's and `validation` _pre-crisis_ period's RMSE. 
-2. During periods of severe market turmoil, the gradient boosted tree algorithm performs best. This is confirmed by investigating the out-of-sample `validation` set which is heavily impacted by the Covid-19 pandemic crisis.
+1. During ‘normal’ times, the support vector machine algorithm with linear kernel outperforms all other considered methods. This is confirmed by two out-of-sample datasets: The `test` set and the `validation` set’s _pre-crisis_ period
+2. During periods of market turmoil, the gradient boosted tree algorithm outperforms all other considered methods. This is confirmed by the complete `validation` set which is heavily impacted by turbulence surrounding the Covid-19 pandemic
 
 The self-developed linear weekday effect model improves over the HAR-RV model by @har. Most importantly, the weekday effect model performs _second best_ at predicting volatility during normal and crisis times, respectively. In addition, this model is simple to train using least squares estimation. The absence of any tuning parameters and the apparent robustness across market conditions makes this model a well-suited candidate for applications in practice.
 
