@@ -1,4 +1,4 @@
-# forecasting-realized-volatility-using-supervised-learning
+# Forecasting Realized Volatility Using Supervised Learning
 
 The files of interest in this repository are:
 
